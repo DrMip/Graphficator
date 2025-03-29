@@ -114,7 +114,7 @@ def update_plot_image():
             ss_res = np.sum((y_val - y_fit_filtered) ** 2)
             ss_tot = np.sum((y_val - np.mean(y_val)) ** 2)
             r_squared = 1 - (ss_res / ss_tot)
-#dfdf
+
             #set the start and end of the fit
             try:
                 x_start = float(start_fit_entry.get())
