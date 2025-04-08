@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
 import matplotlib.pyplot as plt
-import csv
+import pandas as pd
 import io
 import math
 import numpy as np
@@ -11,19 +11,19 @@ import os
 
 
 # Global variables
-x_val, x_err, y_val, y_err = [], [], [], []
+datasets = []
 latest_fig = None
-def make_errorbars(ax):
-    """
-    make error bars
-    :param ax: the plot axes
-    :return:
-    """
-    ax.errorbar(
-        x_val, y_val,
-        xerr=x_err, yerr=y_err,
-        fmt='o', ecolor='red', capsize=3, markersize=5, label='Data'
-    )
+# def make_errorbars(ax):
+#     """
+#     make error bars
+#     :param ax: the plot axes
+#     :return:
+#     """
+#     ax.errorbar(
+#         x_val, y_val,
+#         xerr=x_err, yerr=y_err,
+#         fmt='x', ecolor='red', capsize=3, markersize=0, label='Data'
+#     )
 
 def name_data(ax):
     x_label = xname_entry.get().strip()
@@ -72,14 +72,14 @@ def change_graph(fig):
 def update_plot_image():
     global img_label
 
-    if not x_val or not y_val:
+    if not datasets:
         print("No data to plot.")
         return
 
     # Create the plot
-    fig, ax = plt.subplots(figsize=(5, 4))  # Adjust size as needed
+    fig, ax = plt.subplots(figsize=(6, 4))  # Adjust size as needed
 
-    make_errorbars(ax)
+    #make_errorbars(ax)
 
     name_data(ax)
 
@@ -89,93 +89,97 @@ def update_plot_image():
 
     # === Attempt to fit the curve to the data ===
     fit_expr = fit_entry.get().strip() # the expression
-
-    if fit_expr:
-        try:
-            # Create dynamic fit function
+    for idx, (x_val, x_err, y_val, y_err) in enumerate(datasets):
+        # plot error bars
+        ax.errorbar(x_val, y_val, xerr=x_err, yerr=y_err, fmt='x', label=f'Data {idx + 1}', capsize=3)
+        print((x_val, x_err, y_val, y_err))
+        # perform fit and plot it
+        if fit_expr:
             fit_func_raw = create_fit_function(fit_expr)
 
-            # === Define a wrapper to work with curve_fit ===
             def fit_wrapper(x, *args):
                 param_names = ['a', 'b', 'c', 'd', 'e']
                 params_dict = {name: val for name, val in zip(param_names, args)}
                 return np.array([fit_func_raw(val, **params_dict) for val in x])
 
-            # === Perform the curve fitting ===
-            initial_guess = [0] * (param_number.get()) # initial values for params
-            popt, pcov = curve_fit(fit_wrapper, x_val, y_val, p0=initial_guess)
-            # calculate error
-            perr = np.sqrt(np.diag(pcov))  # standard errors
-
-            # Predict y using the optimal parameters
-            y_fit_filtered = fit_wrapper(x_val, *popt)
-
-            # Calculate R-squared
-            ss_res = np.sum((y_val - y_fit_filtered) ** 2)
-            ss_tot = np.sum((y_val - np.mean(y_val)) ** 2)
-            r_squared = 1 - (ss_res / ss_tot)
-
-            #set the start and end of the fit
             try:
-                x_start = float(start_fit_entry.get())
-                x_end = float(end_fit_entry.get())
-            except ValueError:
-                x_start, x_end = min(x_val), max(x_val)
+                guess_str = init_guess_entry.get().strip()
 
-            # === Generate the fit line using optimal parameters ===
-            x_fit = np.linspace(x_start, x_end, 300)
-            y_fit = fit_wrapper(x_fit, *popt)
-            # create fit label
-            fit_label = "Fit: "
-            for i in range(len(initial_guess)):
-                fit_label += f"{chr(97+i)} = {popt[i]:.4f} ± {perr[i]:.2f}\n"
-            fit_label += f"$R^2$ = {r_squared:.3f}"
-            # add the fit
-            ax.plot(x_fit, y_fit, color="green", label=fit_label)
-            # Show legend
-            ax.legend()
+                try:
+                    # Convert comma-separated string to list of floats
+                    initial_guess = [float(val) for val in guess_str.split(',')]
+                except ValueError:
+                    print("Invalid initial guess format. Please enter comma-separated numbers like: 1, 0.5, 2")
+                    return
 
-        except Exception as e:
-            print(f"Could not generate fitted curve: {e}")
+                popt, pcov = curve_fit(fit_wrapper, x_val, y_val, p0=initial_guess)
+                perr = np.sqrt(np.diag(pcov))
+
+                x_start = float(start_fit_entry.get()) if start_fit_entry.get() else min(x_val)
+                x_end = float(end_fit_entry.get()) if end_fit_entry.get() else max(x_val)
+                x_fit = np.linspace(x_start, x_end, 300)
+                y_fit = fit_wrapper(x_fit, *popt)
+
+                y_fit_filtered = fit_wrapper(x_val, *popt)
+                ss_res = np.sum((y_val - y_fit_filtered) ** 2)
+                ss_tot = np.sum((y_val - np.mean(y_val)) ** 2)
+                r_squared = 1 - (ss_res / ss_tot)
+
+                fit_label = "Fit: "
+                for i in range(len(initial_guess)):
+                    fit_label += f"{chr(97 + i)} = {popt[i]:.4f} ± {perr[i]:.4f}\n"
+                fit_label += f"$R^2$ = {r_squared:.3f}"
+
+                ax.plot(x_fit, y_fit, label=fit_label)
+                # Show legend
+                ax.legend()
+
+            except Exception as e:
+                print(f"Fit failed for dataset {idx + 1}: {e}")
 
     ax.grid(True)
 
     change_graph(fig)
 
 # Function to open and read CSV
-def open_csv():
-    global x_val, x_err, y_val, y_err
-
-    file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
-    if not file_path:
-        return
-
-    x_val.clear()
-    x_err.clear()
-    y_val.clear()
-    y_err.clear()
-
+def open_excel():
+    global datasets
     try:
-        with open(file_path, newline='') as csvfile:
-            reader = csv.reader(csvfile)
-            for i, row in enumerate(reader):
-                # Skip header row
-                if i == 0:
-                    continue
-                if len(row) >= 4:
-                    try:
-                        x_val.append(float(row[0]))
-                        x_err.append(float(row[1]))
-                        y_val.append(float(row[2]))
-                        y_err.append(float(row[3]))
-                    except ValueError:
-                        continue  # Skip invalid rows
+        file_paths = filedialog.askopenfilenames(
+            filetypes=[("Excel Files", "*.xlsx *.xls")],
+            title="Select One or More Excel Files"
+        )
+        print(file_paths)
+        # Reset existing data
+        datasets.clear()
 
-        print(f"Loaded {len(x_val)} data points.")
-        update_plot_image()
+        for file_path in file_paths:
+            try:
+                df = pd.read_excel(file_path)
+                if df.shape[1] < 4:
+                    print(f"{file_path}: not enough columns.")
+                    continue
+
+                x_val, x_err, y_val, y_err = [], [], [], []
+                for _, row in df.iterrows():
+                    try:
+                        x_val.append(float(row.iloc[0]))
+                        x_err.append(float(row.iloc[1]))
+                        y_val.append(float(row.iloc[2]))
+                        y_err.append(float(row.iloc[3]))
+                    except:
+                        continue
+
+                datasets.append((x_val, x_err, y_val, y_err))
+            except Exception as e:
+                print(f"Failed to read {file_path}: {e}")
+
+            for dataset in datasets:
+                print(f"Loaded {len(dataset[0])} data points.")
+            update_plot_image()
 
     except Exception as e:
-        print("Error loading CSV:", e)
+        print("Error loading Excel:", e)
 
 # Save button action
 def save_action():
@@ -238,7 +242,8 @@ img_label = tk.Label(top_frame, text="[No Graph Yet]", font=("Arial", 16), width
 img_label.pack(side='left', padx=10)
 
 # "Open CSV" button (right)
-open_button = tk.Button(top_frame, text="Open CSV", command=open_csv, font=("Arial", 12))
+open_button = tk.Button(top_frame, text="Open Excel", command=open_excel, font=("Arial", 12))
+open_button.pack(side='right', padx=10, pady=10)
 open_button.pack(side='right', padx=10, pady=10)
 
 # === Bottom Frame for text inputs and save ===
@@ -284,21 +289,15 @@ end_fit_label.grid(row=2, column=2, padx=5, pady=5)
 end_fit_entry = tk.Entry(bottom_frame, width=15, font=("Arial", 12))
 end_fit_entry.grid(row=2, column=3, padx=5, pady=5)
 
+init_guess_label = tk.Label(bottom_frame, text="Initial Guess", font=("Arial", 12))
+init_guess_label.grid(row=1, column=2, padx=5, pady=5)
+
+init_guess_entry = tk.Entry(bottom_frame, width=20, font=("Arial", 12))
+init_guess_entry.grid(row=1, column=3, padx=5, pady=5)
+init_guess_entry.insert(0, "1, 1, 1")
+
 save_button = tk.Button(bottom_frame, text="Save", command=save_action, font=("Arial", 12))
 save_button.grid(row=1, column=5, padx=10, pady=5, sticky='e')
-
-param_label = tk.Label(bottom_frame, text="Param Number", font=("Arial", 12))
-param_label.grid(row=2, column=4, padx=10, pady=5)
-
-param_number = tk.IntVar(value=3)
-param_slider = tk.Scale(
-    bottom_frame,
-    from_=1,
-    to=5,
-    orient=tk.HORIZONTAL,
-    variable=param_number
-)
-param_slider.grid(row=2, column=5, padx=10, pady=5)
 
 show_origin = tk.IntVar(value=0)
 origin_checkbox = tk.Checkbutton(
